@@ -11,16 +11,24 @@ needs only USB power, so any phone charger works.
 
 ## States
 
-- green — running
-- yellow — waiting for your next message; the light blanks out after 3 minutes
-  so it isn't glowing all night (`SLEEP_AFTER_MS`), and comes back the moment
-  Claude does anything
-- red, blinking — paused on a permission prompt, waiting for you
+The light is PWM-animated (gamma-corrected so the fades look smooth) and
+crossfades when the state changes:
+
+- green, breathing — running
+- yellow, soft breathing — waiting for your next message; fades out after 3
+  minutes so it isn't glowing all night (`SLEEP_AFTER_MS`), and comes back the
+  moment Claude does anything
+- red, heartbeat — paused on a permission prompt, waiting for you
 - off — no active session
-- red/yellow alternating — WiFi is down or the server can't be reached
+- red/yellow wig-wag — WiFi is down or the server can't be reached
 
 This splits the board's single "red — waiting on you" into red (a permission
 prompt) and yellow (just waiting for your next message).
+
+On power-up it sweeps red → yellow → green once, and runs a comet sweep while
+joining WiFi. Effect timing and brightness live in the tuning block at the top
+of `main.py` (`GAMMA`, `*_BREATHE_S`, `HEART_S`, `TRANS_S`); drop `GAMMA` toward
+1.8 or raise the floors if your LEDs look dim.
 
 ## Wiring
 
