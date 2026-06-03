@@ -1,5 +1,7 @@
 # Claude Status Board
 
+**English** | [简体中文](README.zh-CN.md)
+
 Turn any spare tablet (even an ancient Android 6.0 one) into a desk/wall **status light + remote approval panel** for [Claude Code](https://claude.com/claude-code).
 
 A row per project shows what Claude is doing — 🟢 working, 🌙 idle, 🔴 needs you — at a glance from across the room. When Claude wants to run a command or edit a file, the board turns **red and shows the exact command / diff** with **Approve / Reject** buttons. Tap to let it through; no need to reach for the keyboard.
