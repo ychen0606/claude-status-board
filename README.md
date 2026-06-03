@@ -1,25 +1,23 @@
 # Claude Status Board
 
-**English** | [简体中文](README.zh-CN.md)
+English | [简体中文](README.zh-CN.md)
 
-Turn any spare tablet (even an ancient Android 6.0 one) into a desk/wall **status light + remote approval panel** for [Claude Code](https://claude.com/claude-code).
+A status board for Claude Code. Put an old tablet on your desk or wall and you can tell from across the room what Claude is doing — running, idle, or waiting on you. When it wants to run a command or edit a file, you approve or reject on the tablet instead of switching back to the terminal.
 
-A row per project shows what Claude is doing — 🟢 working, 🌙 idle, 🔴 needs you — at a glance from across the room. When Claude wants to run a command or edit a file, the board turns **red and shows the exact command / diff** with **Approve / Reject** buttons. Tap to let it through; no need to reach for the keyboard.
-
-No flashing, no app, no cloud. **Pure Python standard library** on the host, a single HTML page on the tablet, glued together by Claude Code hooks.
+The host runs a small Python server (standard library only). The tablet just loads one HTML page. Claude Code hooks connect the two. The page is plain ES5, so it renders fine on WebView as old as Android 6.
 
 ![screenshot](docs/screenshot.png)
 
-## Why
+## The states
 
-You start a long Claude Code task and look away. Did it finish? Is it stuck waiting for permission? With several projects running in parallel it's worse. This puts a physical traffic light next to you:
+When several sessions run at once, each gets a row, keyed by session id and labeled with its working directory:
 
-- **🟢 working** — a session is actively running tools
-- **🔴 needs you** — waiting on a permission prompt or your input
-- **🌙 idle** — finished / waiting for your next message
-- **🔴 + buttons** — a guarded action is paused for your approval (with the command/diff shown)
+- green — running
+- grey — idle, or waiting for your next message
+- red — waiting on you (a permission prompt, or input)
+- red with buttons — an action is paused for approval, with the command or diff shown
 
-Each Claude Code session (keyed by `session_id`, labeled by its working directory) gets its own row, sorted so whatever needs you floats to the top.
+Whatever needs you sorts to the top.
 
 ## How it works
 
@@ -27,75 +25,57 @@ Each Claude Code session (keyed by `session_id`, labeled by its working director
 Claude Code session(s)                          Tablet / any browser
   hooks ── slot.py ─────────▶  slots/<sid>.json
            approve_gate.py ──▶  (writes red + req)        ┌────────────────────┐
-                                                          │  GET /  (dashboard)│
+                                                          │  GET /  (the board)│
   server.py  :8088  ── aggregates slots/ ───── /status ──▶│  polls every 1s    │
                      ◀── decisions/<req> ◀──── /decide ───│  [Approve][Reject] │
            approve_gate.py reads decision → allow / deny  └────────────────────┘
 ```
 
-- **`server.py`** — zero-dependency HTTP server. Serves the dashboard at `/`, aggregates the per-session state files at `/status`, and records approve/reject taps at `/decide`.
-- **`slot.py`** — a hook helper. On each Claude Code event it writes that session's state to `slots/<session_id>.json`.
-- **`approve_gate.py`** — a `PreToolUse` hook. For guarded tools it shows the action on the board and **blocks until you tap** (or times out safely back to the keyboard).
-- The web page is plain **ES5 + XHR**, so it renders on WebView as old as Android 5/6.
+`server.py` serves the page and aggregates the per-session state files. `slot.py` is a hook that writes the current session's state to `slots/<session_id>.json` on each event. `approve_gate.py` runs on `PreToolUse`: guarded actions block until you tap, then it allows or denies.
 
-## Install
+## Setup
 
-Requirements: **Python 3** (stdlib only) on the machine running Claude Code. A tablet/phone/old laptop with any browser for the display. [Tailscale](https://tailscale.com/) (or any private network) if the display is on a different device.
+You need Python 3 (standard library) on the machine running Claude Code, and any device with a browser for the display. If the display is a separate machine, put both on the same private network — Tailscale works well.
 
-```bash
+```
 git clone https://github.com/ychen0606/claude-status-board.git
 cd claude-status-board
-./start.sh            # starts the board on :8088 (detached)
-./install.sh          # prints the hooks block with the correct absolute path
+./start.sh      # serves on :8088
+./install.sh    # prints the hooks block with the right absolute path
 ```
 
-1. **Wire the hooks.** Run `./install.sh` and merge the printed `"hooks"` block into `~/.claude/settings.json` (see [`examples/hooks.json`](examples/hooks.json)). New Claude Code sessions pick it up automatically.
-2. **Open the board** at `http://<host>:8088/` from the device you want to use as the display. The page auto-refreshes every second.
-3. **Autostart on boot** (optional): `crontab -e` → add `@reboot /absolute/path/to/claude-status-board/start.sh`.
+Paste the printed `"hooks"` block into `~/.claude/settings.json`; new sessions pick it up. Open `http://<host>:8088/` on the display. For autostart, add `@reboot /path/to/start.sh` to your crontab.
 
-### Use a tablet as an always-on display
+### Tablet as an always-on display
 
-1. Put the tablet on the same private network (e.g. install the **Tailscale** app, log in to the same account) so it can reach the host's IP.
-2. Install **Fully Kiosk Browser**, set Start URL to `http://<host>:8088/`, and enable *Keep Screen On*, *Start on Boot*, and fullscreen.
-3. On the tablet: Developer Options → **Stay awake** (screen never sleeps while charging), set display timeout to max, keep it plugged in.
+Get the tablet onto the same network (the Tailscale app, same account), install Fully Kiosk Browser, point it at the URL, and turn on keep-screen-on, start-on-boot, and fullscreen. In Android's developer options, enable "Stay awake" so the screen never sleeps while charging, and leave it plugged in.
 
-## Remote approval (the gate)
+## Remote approval
 
-Off by default. Enable it with a flag file:
+Off by default:
 
-```bash
-touch gate_enabled    # arm: guarded tools wait for a tap on the board
-rm    gate_enabled    # disarm: board becomes display-only
+```
+touch gate_enabled   # on
+rm gate_enabled      # off
 ```
 
-When armed, `approve_gate.py` intercepts `PreToolUse` for these tools (configurable via `GATED_TOOLS` at the top of the file):
+When it's on, `approve_gate.py` intercepts `Bash`, `Write`, `Edit`, `MultiEdit`, and `NotebookEdit` (change `GATED_TOOLS` to adjust). Bash commands already on your Claude Code allow-list still run without stopping — it reads `~/.claude/settings.local.json` and only pauses on actions you haven't approved before.
 
-`Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`
-
-- **Bash commands already on your Claude Code allow-list run instantly** — the gate reads `~/.claude/settings.local.json` and skips anything you've already approved, so it only stops on genuinely new actions.
-- The board shows the full command, file content preview, or red/green diff, with **Approve / Reject**.
-- **Safety:** it never auto-approves. If no one taps within `TIMEOUT` (default 90s) it falls back to the normal keyboard permission prompt. Any error → fall back, never allow.
-
-Tune at the top of `approve_gate.py`: `GATED_TOOLS`, `TIMEOUT`. To stop gating file edits, remove `Write`/`Edit` from `GATED_TOOLS`.
+The tablet shows the command, a file preview, or a diff, with Approve and Reject. If nobody taps within `TIMEOUT` (90 seconds), it falls back to the normal keyboard prompt. It never auto-approves and never hangs. To stop gating file edits, drop `Write`/`Edit` from `GATED_TOOLS`.
 
 ## Configuration
 
 | What | Where |
 |------|-------|
 | Port | `CLAUDE_BOARD_PORT` env var (default `8088`) |
-| Stale row timeout | `STALE` in `server.py` (default 1800s) |
+| Stale-row timeout | `STALE` in `server.py` (default 1800s) |
 | Guarded tools / approval timeout | `GATED_TOOLS`, `TIMEOUT` in `approve_gate.py` |
-| UI strings / colors | inline in `server.py` (the `HTML` block) |
+| UI text and colors | the `HTML` block in `server.py` |
 
 ## Security
 
-- The server binds `0.0.0.0` and has **no authentication**. Run it on a trusted/private network only (Tailscale, LAN behind a firewall, etc.). **Do not expose port 8088 to the public internet** — anyone who can reach `/decide` can approve actions when the gate is armed.
-- The board displays whatever Claude is about to do (commands, file contents). Treat the screen as you would your terminal.
+The server binds `0.0.0.0` with no authentication, so run it on a trusted network only — Tailscale, a firewalled LAN, that kind of thing. Don't expose port 8088 to the internet: when the gate is on, anyone who can reach `/decide` can approve actions. The board shows the commands and file contents Claude is about to touch, so treat the screen like your terminal.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-*Built with Claude Code. UI strings are in Chinese; PRs to internationalize are welcome.*
