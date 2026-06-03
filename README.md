@@ -8,6 +8,8 @@ The host runs a small Python server (standard library only). The tablet just loa
 
 ![screenshot](docs/screenshot.png)
 
+Prefer hardware to a tablet? There's an [ESP32 traffic-light variant](esp32/) that drives a small desk light off the same `/status` endpoint.
+
 ## The states
 
 When several sessions run at once, each gets a row, keyed by session id and labeled with its working directory:
