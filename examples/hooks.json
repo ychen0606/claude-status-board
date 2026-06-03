@@ -1,0 +1,23 @@
+{
+  "_comment": "Merge the \"hooks\" object below into ~/.claude/settings.json. Replace /ABSOLUTE/PATH/TO/claude-status-board with your clone path (or run ./install.sh to print this filled in).",
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-status-board/slot.py working" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-status-board/approve_gate.py", "timeout": 100 } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-status-board/slot.py working" } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-status-board/slot.py notify" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-status-board/slot.py idle" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "python3 /ABSOLUTE/PATH/TO/claude-status-board/slot.py end" } ] }
+    ]
+  }
+}

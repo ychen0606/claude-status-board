@@ -1,0 +1,15 @@
+# runtime state (per-session slots, pending decisions, gate switch)
+slots/
+decisions/
+gate_enabled
+
+# logs & caches
+*.log
+__pycache__/
+*.pyc
+
+# tooling / scratch
+node_modules/
+package*.json
+shot*.png
+.DS_Store
