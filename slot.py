@@ -94,7 +94,8 @@ def main():
         old = {}
     # 关键: 待授权(attention)被钉住, 不许并发 agent 的"运行中"覆盖, 只刷新 ts 防过期。
     # 否则多 agent 时一个弹权限、另一个在干活, 板子还没轮询到 attention 就被冲成 working → 不提醒。
-    PIN_S = 60
+    # 只钉几秒(够板子轮询到+闪一次即可); 钉太久会导致终端批准后板子半天不更新。
+    PIN_S = 4
     pinned = old.get("state") == "attention" and int(old.get("pin_until", 0) or 0) > now
     if state == "working" and pinned and event != "UserPromptSubmit":
         try:

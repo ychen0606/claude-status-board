@@ -337,8 +337,29 @@ class H(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 self._send(500, "text/plain", str(e).encode("utf-8")); return
             if self.path.startswith("/board.png"):
-                self._send(200, "image/png", png)
-            else:  # /board.json
+                # Conditional request: the board sends If-None-Match=<last hash>; reply 304
+                # (small) when unchanged, else the PNG. buttons/led/bright ride in headers so
+                # the board gets everything in one round-trip (no separate /board.json poll).
+                code = 304 if self.headers.get("If-None-Match", "") == h else 200
+                self.send_response(code)
+                self.send_header("ETag", h)
+                self.send_header("X-Led", led)
+                self.send_header("X-Bright", str(bright))
+                self.send_header("X-Buttons", json.dumps(buttons, ensure_ascii=False))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                if code == 200:
+                    self.send_header("Content-Type", "image/png")
+                    self.send_header("Content-Length", str(len(png)))
+                    self.end_headers()
+                    try:
+                        self.wfile.write(png)
+                    except Exception:
+                        pass
+                else:
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+            else:  # /board.json (kept for compatibility)
                 body = json.dumps({"hash": h, "led": led, "bright": bright, "view": view, "buttons": buttons},
                                   ensure_ascii=False).encode("utf-8")
                 self._send(200, "application/json; charset=utf-8", body)

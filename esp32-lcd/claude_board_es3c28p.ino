@@ -119,20 +119,12 @@ void runWifi(bool forceCfg) {
                 WiFi.localIP().toString().c_str(), WiFi.SSID().c_str());
 }
 
-bool fetchJson(String& hashOut) {
-  HTTPClient http;
-  http.begin(base() + "/board.json?view=" + g_view + "&req=" + g_req);
-  http.setConnectTimeout(1500); http.setTimeout(2500);
-  int code = http.GET();
-  if (code != 200) { http.end(); return false; }
-  String body = http.getString(); http.end();
-  JsonDocument doc;
-  if (deserializeJson(doc, body)) return false;
-  hashOut = String((const char*)(doc["hash"] | ""));
-  g_led   = String((const char*)(doc["led"]  | "off"));
-  g_bright = doc["bright"] | 160;
+void parseButtons(const String& js) {
   g_nbtn = 0;
-  for (JsonObject b : doc["buttons"].as<JsonArray>()) {
+  if (!js.length()) return;
+  JsonDocument doc;
+  if (deserializeJson(doc, js)) return;
+  for (JsonObject b : doc.as<JsonArray>()) {
     if (g_nbtn >= MAXBTN) break;
     g_btn[g_nbtn].x = b["x"] | 0; g_btn[g_nbtn].y = b["y"] | 0;
     g_btn[g_nbtn].w = b["w"] | 0; g_btn[g_nbtn].h = b["h"] | 0;
@@ -140,15 +132,28 @@ bool fetchJson(String& hashOut) {
     g_btn[g_nbtn].req = String((const char*)(b["req"] | ""));
     g_nbtn++;
   }
-  return true;
 }
 
-bool fetchPng() {
+// 一次条件请求拿全部: 0=失败, 1=没变(304), 2=变了(已重绘)。
+// 带 If-None-Match=上次hash; led/bright/buttons 从响应头取, 省掉单独的 /board.json 来回。
+int fetchBoard() {
   HTTPClient http;
   http.begin(base() + "/board.png?view=" + g_view + "&req=" + g_req);
-  http.setConnectTimeout(2000); http.setTimeout(4000);
+  http.addHeader("If-None-Match", g_hash);
+  const char* keys[] = {"ETag", "X-Led", "X-Bright", "X-Buttons"};
+  http.collectHeaders(keys, 4);
+  http.setConnectTimeout(1500); http.setTimeout(3000);
   int code = http.GET();
-  if (code != 200) { http.end(); return false; }
+  // 头里的状态(304 也带), 总是更新
+  String led = http.header("X-Led");
+  if (led.length()) g_led = led;
+  int b = http.header("X-Bright").toInt();
+  if (b > 0) g_bright = b;
+  String xb = http.header("X-Buttons");
+  if (xb.length()) parseButtons(xb);
+  if (code == 304) { http.end(); return 1; }      // 没变
+  if (code != 200) { http.end(); return 0; }      // 失败
+  String etag = http.header("ETag");
   int total = http.getSize();
   WiFiClient* st = http.getStreamPtr();
   int idx = 0; uint32_t t0 = millis();
@@ -164,9 +169,10 @@ bool fetchPng() {
     if (total > 0 && idx >= total) break;
   }
   http.end();
-  if (idx < 100) return false;
+  if (idx < 100) return 0;
   lcd.drawPng(g_img, idx, 0, 0);
-  return true;
+  g_hash = etag;
+  return 2;
 }
 
 void sendDecision(const String& req, const char* d) {
@@ -307,8 +313,8 @@ void loop() {
     }
   }
 
-  // 轮询(批准页降到 2.5s 减少阻塞)
-  uint32_t gap = (g_view == "approve") ? 2500 : 1000;
+  // 轮询: 单次条件请求(批准页 2s, 其它 0.7s)
+  uint32_t gap = (g_view == "approve") ? 2000 : 700;
   if (millis() - lastPoll >= gap) {
     lastPoll = millis();
     if (WiFi.status() != WL_CONNECTED) {        // 掉线: 显示离线 + 触发自动重连
@@ -317,21 +323,19 @@ void loop() {
       WiFi.reconnect();
       return;
     }
-    String h;
-    if (fetchJson(h)) {
-      g_online = true; g_failCount = 0;
-      bool nowAlert = (g_led == "alert");
-      if (nowAlert && !g_wasAlert) { flashScreen3(); g_hash = ""; }   // 新授权出现: 全屏闪3下
-      g_wasAlert = nowAlert;
-      g_wasDone = (g_led == "done");   // 完成不再全屏闪绿(用户要求), 仅绿卡片+绿灯提示
-      if (h != g_hash) { if (fetchPng()) g_hash = h; }
-    } else {
-      // 单次失败不立刻离线: 连续 4 次(~8-10s)失败才显示离线, 扛过瞬时网络抖动
-      g_failCount++;
+    int r = fetchBoard();                        // 一次条件请求: 0=失败 1=没变 2=已重绘
+    if (r == 0) {
+      g_failCount++;                             // 连续 4 次失败才显示离线, 扛瞬时抖动
       if (g_failCount >= 4) {
         g_online = false;
         if (g_hash != "OFFLINE") { drawOffline(); g_hash = "OFFLINE"; }
       }
+    } else {
+      g_online = true; g_failCount = 0;
+      bool nowAlert = (g_led == "alert");
+      if (nowAlert && !g_wasAlert) { flashScreen3(); g_hash = ""; }   // 新授权: 全屏闪3下, 下次强制重绘
+      g_wasAlert = nowAlert;
+      g_wasDone = (g_led == "done");
     }
   }
 
