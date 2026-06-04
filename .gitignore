@@ -13,3 +13,9 @@ node_modules/
 package*.json
 shot*.png
 .DS_Store
+
+usage.json
+hpc.json
+esp32-lcd/build/
+*.bin
+gate_enabled

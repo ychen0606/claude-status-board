@@ -52,6 +52,21 @@ Paste the printed `"hooks"` block into `~/.claude/settings.json`; new sessions p
 
 Get the tablet onto the same network (the Tailscale app, same account), install Fully Kiosk Browser, point it at the URL, and turn on keep-screen-on, start-on-boot, and fullscreen. In Android's developer options, enable "Stay awake" so the screen never sleeps while charging, and leave it plugged in.
 
+## ESP32 touch-LCD board (server-rendered)
+
+Instead of a tablet, you can drive a small ESP32-S3 + 2.8" ILI9341 touch LCD (e.g. LCDWIKI ES3C28P). The server renders the whole UI to a 240×320 PNG (anti-aliased CJK via Pillow + Noto), and the board just pulls the image and handles touch — so you restyle the UI by editing `board_render.py`, no reflashing.
+
+Extra endpoints in `server.py`:
+
+- `GET /board.png?view=&req=` — the current screen as a PNG
+- `GET /board.json?view=&req=` — `{hash, led, bright, buttons:[{x,y,w,h,act,req}]}`: touch hitboxes plus a content hash so the board only refetches the image when it changes
+
+It shows a session list (project · model · command · run-time), the 5-hour and weekly usage-quota bars, a red banner + RGB heartbeat when a session needs authorization (tap to approve, or just as a reminder when you approve in the terminal), a green "✓ done" highlight when a task finishes, optional HPC `squeue` jobs, auto-dim when idle / at night, a WiFi captive-portal for setup, persisted touch calibration, and over-the-air firmware updates. Tap any session for a detail view.
+
+Server-side deps: `pip install Pillow` and a CJK font (Debian: `sudo apt install fonts-noto-cjk`). Usage-quota numbers come from [claude-hud](https://github.com/jarrodwatts/claude-hud): set `display.externalUsageWritePath` to `<repo>/usage.json` in `~/.claude/plugins/claude-hud/config.json`.
+
+Firmware build/flash — arduino-cli setup, libraries, the `invert=true` panel note, OTA — is in [esp32-lcd/README.md](esp32-lcd/README.md).
+
 ## Remote approval
 
 Off by default:
@@ -72,7 +87,10 @@ The tablet shows the command, a file preview, or a diff, with Approve and Reject
 | Port | `CLAUDE_BOARD_PORT` env var (default `8088`) |
 | Stale-row timeout | `STALE` in `server.py` (default 1800s) |
 | Guarded tools / approval timeout | `GATED_TOOLS`, `TIMEOUT` in `approve_gate.py` |
-| UI text and colors | the `HTML` block in `server.py` |
+| Tablet UI text and colors | the `HTML` block in `server.py` |
+| LCD-board UI (layout, colors, fonts) | `board_render.py` |
+| HPC monitor (optional) | `CLAUDE_BOARD_HPC_HOST` (ssh host alias) + `CLAUDE_BOARD_HPC_USER` (default `$USER`) |
+| LCD-board fonts | `CLAUDE_BOARD_FONT`, `CLAUDE_BOARD_FONT_BOLD` (default Noto Sans CJK) |
 
 ## Security
 
