@@ -3,14 +3,20 @@
 # GET /        -> 多行看板网页（纯 ES5，兼容 Android 6.0 老 WebView）
 # GET /status  -> {"slots":[...], "now":ts}  聚合 slots/*.json，过滤过期
 # GET /decide?req=<id>&d=approve|deny -> 写 decisions/<req>，由 approve_gate.py 读取
-import http.server, socketserver, os, time, json, re
+import http.server, socketserver, os, time, json, re, io, hashlib, subprocess, threading
 from urllib.parse import urlparse, parse_qs
+try:
+    import board_render            # 服务端渲染板子 UI(PIL)
+except Exception as _e:
+    board_render = None
+    print("board_render unavailable:", _e, flush=True)
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 SLOTS = os.path.join(DIR, "slots")
 DECISIONS = os.path.join(DIR, "decisions")
 PORT = int(os.environ.get("CLAUDE_BOARD_PORT", "8088"))
 STALE = 1800
+USAGE = os.path.join(DIR, "usage.json")  # claude-hud 写的 5h/周 配额快照
 
 HTML = r"""<!doctype html>
 <html><head>
@@ -209,6 +215,84 @@ def collect_slots():
         pass
     return out
 
+def read_usage():
+    """读 claude-hud 写的 5h/周 配额快照(usage.json)。返回 used_percentage 和距重置分钟数。"""
+    out = {"five_hour": None, "seven_day": None, "fh_reset_min": None, "sd_reset_min": None, "age": None}
+    try:
+        with open(USAGE) as f:
+            u = json.load(f)
+    except Exception:
+        return out
+    import datetime
+    now = time.time()
+    for key, mk in (("five_hour", "fh_reset_min"), ("seven_day", "sd_reset_min")):
+        w = u.get(key) or {}
+        try:
+            out[key] = int(w.get("used_percentage"))
+        except Exception:
+            pass
+        r = w.get("resets_at")
+        if r:
+            try:
+                dt = datetime.datetime.fromisoformat(str(r).replace("Z", "+00:00"))
+                out[mk] = max(0, int((dt.timestamp() - now) / 60))
+            except Exception:
+                pass
+    ua = u.get("updated_at")
+    if ua:
+        try:
+            dt = datetime.datetime.fromisoformat(str(ua).replace("Z", "+00:00"))
+            out["age"] = max(0, int(now - dt.timestamp()))
+        except Exception:
+            pass
+    return out
+
+HPC_FILE = os.path.join(DIR, "hpc.json")
+# HPC sbatch 监控(可选): 设环境变量 CLAUDE_BOARD_HPC_HOST=<ssh主机别名> 开启。
+# 用户默认取 CLAUDE_BOARD_HPC_USER 或 $USER。需本机能免密 ssh 到该主机。
+HPC_HOST = os.environ.get("CLAUDE_BOARD_HPC_HOST", "")
+HPC_USER = os.environ.get("CLAUDE_BOARD_HPC_USER", os.environ.get("USER", ""))
+
+def hpc_poller():
+    """后台每 60s 跑 ssh <host> squeue, 缓存到 hpc.json。HPC 不可达就保留旧值。"""
+    if not HPC_HOST:
+        return
+    while True:
+        try:
+            r = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes", HPC_HOST,
+                 "squeue -u %s -h -o '%%i|%%j|%%T|%%M|%%D'" % HPC_USER],
+                capture_output=True, text=True, timeout=25)
+            jobs = []
+            for line in (r.stdout or "").strip().splitlines():
+                p = line.split("|")
+                if len(p) >= 5:
+                    jobs.append({"id": p[0], "name": p[1], "state": p[2], "time": p[3], "nodes": p[4]})
+            tmp = HPC_FILE + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"jobs": jobs, "ts": int(time.time())}, f, ensure_ascii=False)
+            os.replace(tmp, HPC_FILE)
+        except Exception:
+            pass
+        time.sleep(60)
+
+def read_hpc():
+    try:
+        with open(HPC_FILE) as f:
+            d = json.load(f)
+        return {"jobs": d.get("jobs", []), "age": int(time.time()) - int(d.get("ts", 0))}
+    except Exception:
+        return {"jobs": [], "age": None}
+
+def board_assets(view, req):
+    """渲染板子 UI -> (png_bytes, hash, buttons, led)。hash=PNG字节md5(状态不变则稳定)。"""
+    state = {"slots": collect_slots(), "usage": read_usage(), "hpc": read_hpc(), "now": int(time.time())}
+    img, buttons, led, bright = board_render.render(state, view, req)
+    buf = io.BytesIO(); img.save(buf, "PNG")
+    png = buf.getvalue()
+    h = hashlib.md5(png).hexdigest()[:12]
+    return png, h, buttons, led, bright
+
 class H(http.server.BaseHTTPRequestHandler):
     def _send(self, code, ctype, body):
         self.send_response(code)
@@ -224,7 +308,7 @@ class H(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.startswith("/status"):
-            body = json.dumps({"slots": collect_slots(), "now": int(time.time())},
+            body = json.dumps({"slots": collect_slots(), "usage": read_usage(), "now": int(time.time())},
                               ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", body)
         elif self.path.startswith("/decide"):
@@ -242,6 +326,22 @@ class H(http.server.BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._send(200, "application/json; charset=utf-8", b'{"ok":true}')
+        elif self.path.startswith("/board."):
+            if board_render is None:
+                self._send(500, "text/plain", b"board_render unavailable"); return
+            q = parse_qs(urlparse(self.path).query)
+            view = q.get("view", ["list"])[0]
+            req = re.sub(r"[^A-Za-z0-9_-]", "", (q.get("req", [""])[0]))[:64]   # 允许 sid(详情视图)
+            try:
+                png, h, buttons, led, bright = board_assets(view, req)
+            except Exception as e:
+                self._send(500, "text/plain", str(e).encode("utf-8")); return
+            if self.path.startswith("/board.png"):
+                self._send(200, "image/png", png)
+            else:  # /board.json
+                body = json.dumps({"hash": h, "led": led, "bright": bright, "view": view, "buttons": buttons},
+                                  ensure_ascii=False).encode("utf-8")
+                self._send(200, "application/json; charset=utf-8", body)
         elif self.path == "/" or self.path.startswith("/index"):
             self._send(200, "text/html; charset=utf-8", HTML.encode("utf-8"))
         else:
@@ -251,7 +351,11 @@ class H(http.server.BaseHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("0.0.0.0", PORT), H) as httpd:
-        print("Claude board (v2 UI) on :%d" % PORT, flush=True)
+    # 多线程: 一个慢/挂死的客户端连接不再堵住整个服务(之前单线程 TCPServer
+    # 被板子每秒轮询里偶发的慢连接堵死, 导致所有客户端间歇性连不上)。
+    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    H.timeout = 15  # 单连接闲置超时, 慢/半开连接最多占住一个线程 15s
+    threading.Thread(target=hpc_poller, daemon=True).start()   # HPC sbatch 监控后台轮询
+    with http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H) as httpd:
+        print("Claude board (v2 UI, threaded) on :%d" % PORT, flush=True)
         httpd.serve_forever()

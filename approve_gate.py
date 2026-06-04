@@ -7,12 +7,16 @@ import sys, json, os, time, re
 DIR = os.path.dirname(os.path.abspath(__file__))
 SLOTS = os.path.join(DIR, "slots")
 DECISIONS = os.path.join(DIR, "decisions")
-HOME = os.path.expanduser("~")
-SETTINGS_LOCAL = os.path.join(HOME, ".claude", "settings.local.json")
+SETTINGS_LOCAL = os.path.expanduser("~/.claude/settings.local.json")
 ENABLED_FLAG = os.path.join(DIR, "gate_enabled")
-GATED_TOOLS = {"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"}
+HOME = os.path.expanduser("~")
+GATED_TOOLS = {"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "Task"}
 TIMEOUT = 90.0
 POLL = 0.3
+
+def is_gated(tool):
+    # 5 类写/执行工具 + WebFetch + 子代理(Task) + 所有 MCP 工具(mcp__server__tool)
+    return tool in GATED_TOOLS or tool.startswith("mcp__")
 
 def project_name(cwd):
     if not cwd:
@@ -26,11 +30,30 @@ def safe_id(sid):
     return re.sub(r"[^A-Za-z0-9_-]", "", sid)[:64] or "nosid"
 
 def write_slot(sid, cwd, state, msg="", req="", label=""):
+    now = int(time.time())
+    path = os.path.join(SLOTS, sid + ".json")
+    # 待授权被钉住时, 并发 agent 的"运行中"不许覆盖(只刷新 ts)
+    if state == "working":
+        try:
+            with open(path) as f:
+                old = json.load(f)
+        except Exception:
+            old = {}
+        if old.get("state") == "attention" and int(old.get("pin_until", 0) or 0) > now:
+            try:
+                old["ts"] = now
+                tmp = path + ".tmp.%d" % os.getpid()
+                with open(tmp, "w") as ff:
+                    json.dump(old, ff, ensure_ascii=False)
+                os.replace(tmp, path)
+            except Exception:
+                pass
+            return
     obj = {"sid": sid, "project": project_name(cwd), "cwd": cwd,
-           "state": state, "ts": int(time.time()), "msg": msg, "req": req, "label": label}
+           "state": state, "ts": now, "msg": msg, "req": req, "label": label,
+           "pin_until": (now + 95) if state == "attention" else 0}
     try:
         os.makedirs(SLOTS, exist_ok=True)
-        path = os.path.join(SLOTS, sid + ".json")
         tmp = path + ".tmp.%d" % os.getpid()
         with open(tmp, "w") as f:
             json.dump(obj, f, ensure_ascii=False)
@@ -104,6 +127,20 @@ def describe(tool, ti):
     if tool == "NotebookEdit":
         fp = str(ti.get("notebook_path", ""))
         return "Notebook 编辑", "%s\n──────────\n%s" % (fp, clip(str(ti.get("new_source", "")), 14, 450))
+    if tool == "WebFetch":
+        return "联网抓取", "%s\n──────────\n%s" % (str(ti.get("url", "")), clip(str(ti.get("prompt", "")), 8, 320))
+    if tool == "Task":
+        return "派子代理", "%s  [%s]\n──────────\n%s" % (
+            str(ti.get("description", "")), str(ti.get("subagent_type", "")),
+            clip(str(ti.get("prompt", "")), 12, 450))
+    if tool.startswith("mcp__"):
+        parts = tool.split("__")
+        name = (parts[1] + " · " + parts[2]) if len(parts) >= 3 else tool
+        try:
+            preview = json.dumps(ti, ensure_ascii=False, indent=1)
+        except Exception:
+            preview = str(ti)
+        return "MCP 调用", name + "\n──────────\n" + clip(preview, 15, 450)
     return tool, ""
 
 def prune_decisions():
@@ -133,7 +170,7 @@ def main():
     cwd = str(data.get("cwd") or "")
 
     enabled = os.path.exists(ENABLED_FLAG) or bool(os.environ.get("GATE_FORCE"))
-    if not enabled or tool not in GATED_TOOLS:
+    if not enabled or not is_gated(tool):
         write_slot(sid, cwd, "working", "运行中…")
         return
     if tool == "Bash" and bash_allowlisted(str(ti.get("command", ""))):
