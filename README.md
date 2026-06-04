@@ -8,7 +8,9 @@ The host runs a small Python server (standard library only). The tablet just loa
 
 ![screenshot](docs/screenshot.png)
 
-Prefer hardware to a tablet? There's an [ESP32 traffic-light variant](esp32/) that drives a small desk light off the same `/status` endpoint.
+Prefer dedicated hardware? Drive a small **ESP32-S3 touch LCD** instead — the server renders the whole UI to an image and the board is a thin client, with on-screen approval, usage-quota bars, per-session detail, and an optional HPC monitor ([details below](#esp32-touch-lcd-board-server-rendered)). There's also a simpler [ESP32 traffic-light variant](esp32/) that drives a desk light off the same `/status` endpoint.
+
+![ESP32 LCD board](docs/lcd-screenshot.png)
 
 ## The states
 

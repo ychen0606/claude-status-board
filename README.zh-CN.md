@@ -8,7 +8,9 @@
 
 ![截图](docs/screenshot.png)
 
-不想用平板想用硬件?还有个 [ESP32 红绿灯版](esp32/),靠同一个 `/status` 接口点一盏桌面小灯。
+想用专门的硬件?可以接一块小的 **ESP32-S3 触摸屏**:服务端把整个界面渲染成图,板子只负责拉图显示,屏上直接批准、看用量配额、点会话看详情、还能监控 HPC 任务(详见下文「ESP32 触摸屏看板」)。也有个更简单的 [ESP32 红绿灯版](esp32/),靠同一个 `/status` 接口点一盏桌面小灯。
+
+![ESP32 LCD 看板](docs/lcd-screenshot.png)
 
 ## 几种状态
 
@@ -52,6 +54,21 @@ cd claude-status-board
 
 平板装 Tailscale 进同一个网,再装 Fully Kiosk Browser,把网址设成 Start URL,打开常亮、开机自启、全屏。系统开发者选项里把"保持唤醒状态"打开,这样充电时不会息屏。插着电就一直亮着了。
 
+## ESP32 触摸屏看板(服务端渲染)
+
+除了平板,也可以接一块小的 ESP32-S3 + 2.8" ILI9341 触摸屏(比如 LCDWIKI ES3C28P)。服务端把整个界面渲染成一张 240×320 的 PNG(用 Pillow + Noto 抗锯齿中文),板子只负责拉图显示、处理触摸 —— 所以改样式只动 `board_render.py`,不用重新烧固件。
+
+`server.py` 多两个接口:
+
+- `GET /board.png?view=&req=` —— 当前屏幕的 PNG
+- `GET /board.json?view=&req=` —— `{hash, led, bright, buttons:[{x,y,w,h,act,req}]}`:触摸命中区,加一个内容指纹,画面没变板子就不重复拉图
+
+屏上显示:会话列表(项目 · 模型 · 命令 · 运行时长)、5 小时和每周的用量配额条、某会话需要授权时的红色横幅 + RGB 心跳(可在板上点批准,或只当成去终端确认的提醒)、任务完成时的绿色「✓ 完成」高亮、可选的 HPC `squeue` 任务、空闲/夜间自动调暗、配网用的 WiFi 热点、存进 flash 的触摸校准、以及 WiFi 空中升级(OTA)。点任意会话进详情页。
+
+服务端依赖:`pip install Pillow` 和一个中文字体(Debian:`sudo apt install fonts-noto-cjk`)。用量配额数据来自 [claude-hud](https://github.com/jarrodwatts/claude-hud):在 `~/.claude/plugins/claude-hud/config.json` 里把 `display.externalUsageWritePath` 设成 `<仓库>/usage.json`。
+
+固件构建/烧录 —— arduino-cli 配置、库、`invert=true` 面板说明、OTA —— 见 [esp32-lcd/README.md](esp32-lcd/README.md)。
+
 ## 远程审批
 
 默认不开。
@@ -72,7 +89,10 @@ rm gate_enabled      # 关
 | 端口 | 环境变量 `CLAUDE_BOARD_PORT`(默认 `8088`) |
 | 过期行清理 | `server.py` 里的 `STALE`(默认 1800 秒) |
 | 受控工具 / 审批超时 | `approve_gate.py` 里的 `GATED_TOOLS`、`TIMEOUT` |
-| 界面文案 / 配色 | `server.py` 里的 `HTML` 块 |
+| 平板界面文案 / 配色 | `server.py` 里的 `HTML` 块 |
+| LCD 板界面(布局/配色/字体) | `board_render.py` |
+| HPC 监控(可选) | `CLAUDE_BOARD_HPC_HOST`(ssh 主机别名)+ `CLAUDE_BOARD_HPC_USER`(默认 `$USER`) |
+| LCD 板字体 | `CLAUDE_BOARD_FONT`、`CLAUDE_BOARD_FONT_BOLD`(默认 Noto Sans CJK) |
 
 ## 安全
 
