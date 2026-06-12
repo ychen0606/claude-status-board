@@ -52,15 +52,14 @@ STATE_LABEL = {"attention": "waiting on you", "working": "working",
 
 
 def make_icon(state, dim=False):
-    """Draw a filled circle as the tray icon."""
+    """Draw a filled circle that nearly fills the canvas (fills the tray slot)."""
     rgb = COLORS.get(state, COLORS["idle"])
     if dim:
         rgb = tuple(int(c * 0.32) for c in rgb)
-    size = 64
+    size = 256                       # render large so Windows downscaling stays crisp
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse([6, 6, size - 6, size - 6], fill=rgb + (255,),
-              outline=(0, 0, 0, 70), width=2)
+    d.ellipse([2, 2, size - 3, size - 3], fill=rgb + (255,))
     return img
 
 
