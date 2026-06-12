@@ -63,3 +63,21 @@ pyinstaller --noconsole --onefile --name claude-board claude_board_tray.py
 The result is `dist\claude-board.exe`. Configure it through the same
 environment variables, or edit the defaults at the top of the script and
 rebuild.
+
+## Floating window variant
+
+The tray slot is a fixed size set by the OS, so the dot can only get so big.
+If you want something more visible, `claude_board_window.py` is a small
+frameless, always-on-top window instead: a large colored dot plus three lines
+of text (state summary, the most urgent project, 5h/weekly quota). Drag to
+move, double-click to open the web board, right-click to quit.
+
+```
+set CLAUDE_BOARD_HOST=192.168.1.50
+python claude_board_window.py
+```
+
+Standard library only (tkinter) — no `pip install` needed. Same
+`CLAUDE_BOARD_HOST` / `CLAUDE_BOARD_PORT` / `CLAUDE_BOARD_POLL` environment
+variables. Run it instead of, or alongside, the tray icon.
+
