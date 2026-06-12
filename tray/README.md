@@ -68,16 +68,21 @@ rebuild.
 
 The tray slot is a fixed size set by the OS, so the dot can only get so big.
 If you want something more visible, `claude_board_window.py` is a small
-frameless, always-on-top window instead: a large colored dot plus three lines
-of text (state summary, the most urgent project, 5h/weekly quota). Drag to
-move, double-click to open the web board, right-click to quit.
+frameless, always-on-top rounded card instead: a smooth glowing status dot plus
+three lines of text — the most urgent project and session count, the state word
+(in the state color) and current action, and the 5h/weekly quota. Drag to move,
+mouse-wheel or right-click → Window size to resize (remembered across restarts),
+double-click to open the web board, right-click to quit.
 
 ```
+pip install pillow
 set CLAUDE_BOARD_HOST=192.168.1.50
 python claude_board_window.py
 ```
 
-Standard library only (tkinter) — no `pip install` needed. Same
-`CLAUDE_BOARD_HOST` / `CLAUDE_BOARD_PORT` / `CLAUDE_BOARD_POLL` environment
+The card is rendered with PIL and composited with a Windows layered window
+(per-pixel alpha), so the rounded corners stay smooth and crisp; it falls back
+to a solid rectangle elsewhere. Needs Pillow (already in `requirements.txt`).
+Same `CLAUDE_BOARD_HOST` / `CLAUDE_BOARD_PORT` / `CLAUDE_BOARD_POLL` environment
 variables. Run it instead of, or alongside, the tray icon.
 
